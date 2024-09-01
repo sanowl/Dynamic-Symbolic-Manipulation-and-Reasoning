@@ -9,50 +9,52 @@ from sympy.parsing.sympy_parser import parse_expr
 
 class RiemannianManifold:
     def __init__(self, dim: int):
-        self.dim = dim
-        self.metric = tf.Variable(tf.eye(dim), name='metric')
-        self.christoffel = tf.Variable(tf.zeros((dim, dim, dim)), name='christoffel')
+        self.dim: int = dim
+        self.metric: tf.Variable = tf.Variable(tf.eye(dim), name='metric')
+        self.christoffel: tf.Variable = tf.Variable(tf.zeros((dim, dim, dim)), name='christoffel')
 
-    def __call__(self, x):
+    def __call__(self, x: tf.Tensor) -> tf.Tensor:
         return tf.matmul(tf.matmul(x, self.metric), tf.transpose(x))
 
     def geodesic(self, start: tf.Tensor, end: tf.Tensor, steps: int) -> tf.Tensor:
-        def geodesic_ode(t, y):
-            pos, vel = y[:self.dim], y[self.dim:]
+        def geodesic_ode(t: float, y: np.ndarray) -> np.ndarray:
+            pos = tf.convert_to_tensor(y[:self.dim])
+            vel = tf.convert_to_tensor(y[self.dim:])
             acc = -tf.einsum('ijk,j,k->i', self.christoffel, vel, vel)
-            return tf.concat([vel, acc], axis=0)
+            return np.concatenate([vel.numpy(), acc.numpy()])
 
         y0 = tf.concat([start, end - start], axis=0)
-        t = tf.linspace(0.0, 1.0, steps)
-        solution = integrate.solve_ivp(geodesic_ode, (0, 1), y0.numpy(), t_eval=t.numpy())
+        t = np.linspace(0.0, 1.0, steps)
+        solution = integrate.solve_ivp(geodesic_ode, (0, 1), y0.numpy(), t_eval=t)
         return tf.convert_to_tensor(solution.y[:self.dim].T, dtype=tf.float32)
 
     def parallel_transport(self, v: tf.Tensor, curve: tf.Tensor) -> tf.Tensor:
-        def transport_ode(t, y):
-            pos, vec = y[:self.dim], y[self.dim:]
-            dvec = -tf.einsum('ijk,j,k->i', self.christoffel, vec, curve[int(t*len(curve))])
-            return tf.concat([curve[int(t*len(curve))], dvec], axis=0)
+        def transport_ode(t: float, y: np.ndarray) -> np.ndarray:
+            pos = tf.convert_to_tensor(y[:self.dim])
+            vec = tf.convert_to_tensor(y[self.dim:])
+            dvec = -tf.einsum('ijk,j,k->i', self.christoffel, vec, curve[int(t * len(curve))])
+            return np.concatenate([curve[int(t * len(curve))].numpy(), dvec.numpy()])
 
         y0 = tf.concat([curve[0], v], axis=0)
-        t = tf.linspace(0.0, 1.0, curve.shape[0])
-        solution = integrate.solve_ivp(transport_ode, (0, 1), y0.numpy(), t_eval=t.numpy())
+        t = np.linspace(0.0, 1.0, curve.shape[0])
+        solution = integrate.solve_ivp(transport_ode, (0, 1), y0.numpy(), t_eval=t)
         return tf.convert_to_tensor(solution.y[self.dim:].T, dtype=tf.float32)
 
 class LieGroup:
     def __init__(self, dim: int):
-        self.dim = dim
-        self.algebra = tf.Variable(tf.random.normal((dim, dim)), name='algebra')
+        self.dim: int = dim
+        self.algebra: tf.Variable = tf.Variable(tf.random.normal((dim, dim)), name='algebra')
 
-    def __call__(self, x):
+    def __call__(self, x: tf.Tensor) -> tf.Tensor:
         return tf.matmul(tf.linalg.expm(self.algebra), x)
 
-    def act(self, x):
+    def act(self, x: tf.Tensor) -> tf.Tensor:
         return self(x)
 
-    def adjoint(self):
+    def adjoint(self) -> tf.Tensor:
         return tf.linalg.expm(self.algebra)
 
-    def log(self):
+    def log(self) -> tf.Tensor:
         return self.algebra
 
     @staticmethod
@@ -61,10 +63,10 @@ class LieGroup:
 
 class PoissonManifold:
     def __init__(self, dim: int):
-        self.dim = dim
-        self.J = tf.Variable(tf.zeros((dim, dim)), name='J')
+        self.dim: int = dim
+        self.J: tf.Variable = tf.Variable(tf.zeros((dim, dim)), name='J')
 
-    def poisson_bracket(self, f: Callable, g: Callable, x: tf.Tensor) -> tf.Tensor:
+    def poisson_bracket(self, f: Callable[[tf.Tensor], tf.Tensor], g: Callable[[tf.Tensor], tf.Tensor], x: tf.Tensor) -> tf.Tensor:
         with tf.GradientTape() as tape1:
             tape1.watch(x)
             with tf.GradientTape() as tape2:
@@ -76,26 +78,26 @@ class PoissonManifold:
 
 class NeuralSymbolicMapping:
     def __init__(self, neural_dim: int, symbolic_dim: int):
-        self.w1 = tf.Variable(tf.random.normal((neural_dim, 512)), name='w1')
-        self.b1 = tf.Variable(tf.zeros(512), name='b1')
-        self.w2 = tf.Variable(tf.random.normal((512, 512)), name='w2')
-        self.b2 = tf.Variable(tf.zeros(512), name='b2')
-        self.w3 = tf.Variable(tf.random.normal((512, symbolic_dim)), name='w3')
-        self.b3 = tf.Variable(tf.zeros(symbolic_dim), name='b3')
+        self.w1: tf.Variable = tf.Variable(tf.random.normal((neural_dim, 512)), name='w1')
+        self.b1: tf.Variable = tf.Variable(tf.zeros(512), name='b1')
+        self.w2: tf.Variable = tf.Variable(tf.random.normal((512, 512)), name='w2')
+        self.b2: tf.Variable = tf.Variable(tf.zeros(512), name='b2')
+        self.w3: tf.Variable = tf.Variable(tf.random.normal((512, symbolic_dim)), name='w3')
+        self.b3: tf.Variable = tf.Variable(tf.zeros(symbolic_dim), name='b3')
 
-    def __call__(self, x):
+    def __call__(self, x: tf.Tensor) -> tf.Tensor:
         x = tf.nn.relu(tf.matmul(x, self.w1) + self.b1)
         x = tf.nn.relu(tf.matmul(x, self.w2) + self.b2)
         return tf.matmul(x, self.w3) + self.b3
 
 class StochasticNeuralUpdate:
     def __init__(self, dim: int):
-        self.w_drift = tf.Variable(tf.random.normal((dim, dim)), name='w_drift')
-        self.b_drift = tf.Variable(tf.zeros(dim), name='b_drift')
-        self.w_diffusion = tf.Variable(tf.random.normal((dim, dim)), name='w_diffusion')
-        self.b_diffusion = tf.Variable(tf.zeros(dim), name='b_diffusion')
+        self.w_drift: tf.Variable = tf.Variable(tf.random.normal((dim, dim)), name='w_drift')
+        self.b_drift: tf.Variable = tf.Variable(tf.zeros(dim), name='b_drift')
+        self.w_diffusion: tf.Variable = tf.Variable(tf.random.normal((dim, dim)), name='w_diffusion')
+        self.b_diffusion: tf.Variable = tf.Variable(tf.zeros(dim), name='b_diffusion')
 
-    def __call__(self, x, dt):
+    def __call__(self, x: tf.Tensor, dt: float) -> tf.Tensor:
         drift = tf.matmul(x, self.w_drift) + self.b_drift
         diffusion = tf.matmul(x, self.w_diffusion) + self.b_diffusion
         noise = tf.random.normal(tf.shape(x))
@@ -125,17 +127,19 @@ class SymbolicManipulator:
 
 class DSMR:
     def __init__(self, neural_dim: int, symbolic_dim: int):
-        self.neural_dim = neural_dim
-        self.symbolic_dim = symbolic_dim
-        self.manifold = RiemannianManifold(symbolic_dim)
-        self.lie_group = LieGroup(symbolic_dim)
-        self.poisson = PoissonManifold(symbolic_dim)
-        self.mapping = NeuralSymbolicMapping(neural_dim, symbolic_dim)
-        self.update = StochasticNeuralUpdate(neural_dim)
-        self.optimizer = tf.optimizers.Adam(learning_rate=0.001)
+        self.neural_dim: int = neural_dim
+        self.symbolic_dim: int = symbolic_dim
+        self.manifold: RiemannianManifold = RiemannianManifold(symbolic_dim)
+        self.lie_group: LieGroup = LieGroup(symbolic_dim)
+        self.poisson: PoissonManifold = PoissonManifold(symbolic_dim)
+        self.mapping: NeuralSymbolicMapping = NeuralSymbolicMapping(neural_dim, symbolic_dim)
+        self.update: StochasticNeuralUpdate = StochasticNeuralUpdate(neural_dim)
+        self.optimizer: tf.optimizers.Optimizer = tf.optimizers.Adam(learning_rate=0.001)
         self.llm = TFAutoModelForCausalLM.from_pretrained("gpt2")
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.symbolic_manipulator = SymbolicManipulator()
+        self.symbolic_repr: sp.Expr = sp.Expr()
+        self.neural_embedding: tf.Tensor = tf.constant([])
 
     def set_equation(self, equation_str: str) -> None:
         self.symbolic_repr = sp.sympify(equation_str)
@@ -179,19 +183,20 @@ class DSMR:
         self.optimizer.apply_gradients(zip(grads, variables))
 
     @tf.function
-    def hamiltonian_flow(self, H: Callable, x0: tf.Tensor, t: tf.Tensor) -> tf.Tensor:
-        def ham_ode(t, x):
+    def hamiltonian_flow(self, H: Callable[[tf.Tensor], tf.Tensor], x0: tf.Tensor, t: tf.Tensor) -> tf.Tensor:
+        def ham_ode(t: float, x: np.ndarray) -> np.ndarray:
+            x_tensor = tf.convert_to_tensor(x)
             with tf.GradientTape() as tape:
-                tape.watch(x)
-                Hx = H(x)
-            dH = tape.gradient(Hx, x)
-            return tf.linalg.matvec(self.poisson.J, dH)
+                tape.watch(x_tensor)
+                Hx = H(x_tensor)
+            dH = tape.gradient(Hx, x_tensor)
+            return tf.linalg.matvec(self.poisson.J, dH).numpy()
 
         solution = integrate.solve_ivp(ham_ode, (t[0].numpy(), t[-1].numpy()), x0.numpy(), t_eval=t.numpy())
         return tf.convert_to_tensor(solution.y.T, dtype=tf.float32)
 
     def iterate(self, n_steps: int) -> List[sp.Expr]:
-        results = []
+        results: List[sp.Expr] = []
         for _ in range(n_steps):
             manipulation = self.neural_guided_manipulation()
             new_expr = self.symbolic_execution(manipulation)
@@ -202,10 +207,10 @@ class DSMR:
         return results
 
 @pytest.fixture
-def dsmr_instance():
+def dsmr_instance() -> DSMR:
     return DSMR(neural_dim=768, symbolic_dim=50)  # 768 is the hidden size of GPT-2
 
-def test_riemannian_manifold(dsmr_instance):
+def test_riemannian_manifold(dsmr_instance: DSMR) -> None:
     manifold = dsmr_instance.manifold
     x = tf.random.normal((dsmr_instance.symbolic_dim,))
     y = tf.random.normal((dsmr_instance.symbolic_dim,))
@@ -214,7 +219,7 @@ def test_riemannian_manifold(dsmr_instance):
     transported = manifold.parallel_transport(x, geodesic)
     assert transported.shape == (10, dsmr_instance.symbolic_dim)
 
-def test_lie_group(dsmr_instance):
+def test_lie_group(dsmr_instance: DSMR) -> None:
     lie_group = dsmr_instance.lie_group
     x = tf.random.normal((dsmr_instance.symbolic_dim,))
     acted = lie_group.act(x)
@@ -222,7 +227,7 @@ def test_lie_group(dsmr_instance):
     adj = lie_group.adjoint()
     assert adj.shape == (dsmr_instance.symbolic_dim, dsmr_instance.symbolic_dim)
 
-def test_poisson_manifold(dsmr_instance):
+def test_poisson_manifold(dsmr_instance: DSMR) -> None:
     poisson = dsmr_instance.poisson
     f = lambda x: tf.reduce_sum(x**2)
     g = lambda x: tf.reduce_prod(x)
@@ -230,27 +235,27 @@ def test_poisson_manifold(dsmr_instance):
     bracket = poisson.poisson_bracket(f, g, x)
     assert isinstance(bracket, tf.Tensor)
 
-def test_equation_setting(dsmr_instance):
+def test_equation_setting(dsmr_instance: DSMR) -> None:
     dsmr_instance.set_equation("x**2 + 2*x + 1")
     assert str(dsmr_instance.symbolic_repr) == "x**2 + 2*x + 1"
 
-def test_neural_guided_manipulation(dsmr_instance):
+def test_neural_guided_manipulation(dsmr_instance: DSMR) -> None:
     dsmr_instance.set_equation("x**2 + 2*x + 1")
     manipulation = dsmr_instance.neural_guided_manipulation()
     assert isinstance(manipulation, str)
 
-def test_symbolic_execution(dsmr_instance):
+def test_symbolic_execution(dsmr_instance: DSMR) -> None:
     dsmr_instance.set_equation("x**2 + 2*x + 1")
     new_expr = dsmr_instance.symbolic_execution("x -> x + 1")
     assert str(new_expr) == "(x + 1)**2 + 2*(x + 1) + 1"
 
-def test_iteration(dsmr_instance):
+def test_iteration(dsmr_instance: DSMR) -> None:
     dsmr_instance.set_equation("x**2 + 2*x + 1")
     results = dsmr_instance.iterate(3)
     assert len(results) == 3
     assert all(isinstance(expr, sp.Expr) for expr in results)
 
-def test_hamiltonian_flow(dsmr_instance):
+def test_hamiltonian_flow(dsmr_instance: DSMR) -> None:
     H = lambda x: tf.reduce_sum(x**2)
     x0 = tf.constant([1.0, 0.0, 0.0, 0.0, 0.0])  # Only first two dimensions are used
     t = tf.linspace(0.0, 10.0, 100)
