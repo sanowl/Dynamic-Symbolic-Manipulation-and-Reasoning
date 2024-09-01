@@ -7,14 +7,13 @@ import pytest
 from scipy import integrate, linalg
 from sympy.parsing.sympy_parser import parse_expr
 
-class RiemannianManifold(tf.keras.layers.Layer):
+class RiemannianManifold:
     def __init__(self, dim: int):
-        super().__init__()
         self.dim = dim
-        self.metric = self.add_weight(shape=(dim, dim), initializer='identity', name='metric')
-        self.christoffel = self.add_weight(shape=(dim, dim, dim), initializer='zeros', name='christoffel')
+        self.metric = tf.Variable(tf.eye(dim), name='metric')
+        self.christoffel = tf.Variable(tf.zeros((dim, dim, dim)), name='christoffel')
 
-    def call(self, x):
+    def __call__(self, x):
         return tf.matmul(tf.matmul(x, self.metric), tf.transpose(x))
 
     def geodesic(self, start: tf.Tensor, end: tf.Tensor, steps: int) -> tf.Tensor:
@@ -39,13 +38,12 @@ class RiemannianManifold(tf.keras.layers.Layer):
         solution = integrate.solve_ivp(transport_ode, (0, 1), y0.numpy(), t_eval=t.numpy())
         return tf.convert_to_tensor(solution.y[self.dim:].T, dtype=tf.float32)
 
-class LieGroup(tf.keras.layers.Layer):
+class LieGroup:
     def __init__(self, dim: int):
-        super().__init__()
         self.dim = dim
-        self.algebra = self.add_weight(shape=(dim, dim), initializer='random_normal', name='algebra')
+        self.algebra = tf.Variable(tf.random.normal((dim, dim)), name='algebra')
 
-    def call(self, x):
+    def __call__(self, x):
         return tf.matmul(tf.linalg.expm(self.algebra), x)
 
     def act(self, x):
@@ -61,11 +59,10 @@ class LieGroup(tf.keras.layers.Layer):
     def bracket(X: tf.Tensor, Y: tf.Tensor) -> tf.Tensor:
         return tf.matmul(X, Y) - tf.matmul(Y, X)
 
-class PoissonManifold(tf.keras.layers.Layer):
+class PoissonManifold:
     def __init__(self, dim: int):
-        super().__init__()
         self.dim = dim
-        self.J = self.add_weight(shape=(dim, dim), initializer='zeros', name='J')
+        self.J = tf.Variable(tf.zeros((dim, dim)), name='J')
 
     def poisson_bracket(self, f: Callable, g: Callable, x: tf.Tensor) -> tf.Tensor:
         with tf.GradientTape() as tape1:
@@ -77,27 +74,30 @@ class PoissonManifold(tf.keras.layers.Layer):
         dg = tape1.gradient(g(x), x)
         return tf.einsum('i,ij,j->', df, self.J, dg)
 
-class NeuralSymbolicMapping(tf.keras.layers.Layer):
+class NeuralSymbolicMapping:
     def __init__(self, neural_dim: int, symbolic_dim: int):
-        super().__init__()
-        self.map = tf.keras.Sequential([
-            tf.keras.layers.Dense(512, activation='relu'),
-            tf.keras.layers.Dense(512, activation='relu'),
-            tf.keras.layers.Dense(symbolic_dim)
-        ])
+        self.w1 = tf.Variable(tf.random.normal((neural_dim, 512)), name='w1')
+        self.b1 = tf.Variable(tf.zeros(512), name='b1')
+        self.w2 = tf.Variable(tf.random.normal((512, 512)), name='w2')
+        self.b2 = tf.Variable(tf.zeros(512), name='b2')
+        self.w3 = tf.Variable(tf.random.normal((512, symbolic_dim)), name='w3')
+        self.b3 = tf.Variable(tf.zeros(symbolic_dim), name='b3')
 
-    def call(self, x):
-        return self.map(x)
+    def __call__(self, x):
+        x = tf.nn.relu(tf.matmul(x, self.w1) + self.b1)
+        x = tf.nn.relu(tf.matmul(x, self.w2) + self.b2)
+        return tf.matmul(x, self.w3) + self.b3
 
-class StochasticNeuralUpdate(tf.keras.layers.Layer):
+class StochasticNeuralUpdate:
     def __init__(self, dim: int):
-        super().__init__()
-        self.drift = tf.keras.layers.Dense(dim)
-        self.diffusion = tf.keras.layers.Dense(dim)
+        self.w_drift = tf.Variable(tf.random.normal((dim, dim)), name='w_drift')
+        self.b_drift = tf.Variable(tf.zeros(dim), name='b_drift')
+        self.w_diffusion = tf.Variable(tf.random.normal((dim, dim)), name='w_diffusion')
+        self.b_diffusion = tf.Variable(tf.zeros(dim), name='b_diffusion')
 
-    def call(self, x, dt):
-        drift = self.drift(x)
-        diffusion = self.diffusion(x)
+    def __call__(self, x, dt):
+        drift = tf.matmul(x, self.w_drift) + self.b_drift
+        diffusion = tf.matmul(x, self.w_diffusion) + self.b_diffusion
         noise = tf.random.normal(tf.shape(x))
         return x + drift * dt + diffusion * noise * tf.sqrt(dt)
 
@@ -123,9 +123,8 @@ class SymbolicManipulator:
     def lie_derivative(vector_field: List[sp.Expr], func: sp.Expr, variables: List[sp.Symbol]) -> sp.Expr:
         return sum(v * sp.diff(func, var) for v, var in zip(vector_field, variables))
 
-class DSMR(tf.keras.Model):
+class DSMR:
     def __init__(self, neural_dim: int, symbolic_dim: int):
-        super().__init__()
         self.neural_dim = neural_dim
         self.symbolic_dim = symbolic_dim
         self.manifold = RiemannianManifold(symbolic_dim)
@@ -133,7 +132,7 @@ class DSMR(tf.keras.Model):
         self.poisson = PoissonManifold(symbolic_dim)
         self.mapping = NeuralSymbolicMapping(neural_dim, symbolic_dim)
         self.update = StochasticNeuralUpdate(neural_dim)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+        self.optimizer = tf.optimizers.Adam(learning_rate=0.001)
         self.llm = TFAutoModelForCausalLM.from_pretrained("gpt2")
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.symbolic_manipulator = SymbolicManipulator()
@@ -167,9 +166,17 @@ class DSMR(tf.keras.Model):
         new_embedding = self._equation_to_embedding(str(new_expr))
         with tf.GradientTape() as tape:
             self.neural_embedding = self.update(self.neural_embedding, verification)
-            loss = tf.keras.losses.MSE(self.neural_embedding, new_embedding)
-        grads = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+            loss = tf.reduce_mean(tf.square(self.neural_embedding - new_embedding))
+        
+        variables = (
+            self.manifold.metric, self.manifold.christoffel,
+            self.lie_group.algebra,
+            self.poisson.J,
+            self.mapping.w1, self.mapping.b1, self.mapping.w2, self.mapping.b2, self.mapping.w3, self.mapping.b3,
+            self.update.w_drift, self.update.b_drift, self.update.w_diffusion, self.update.b_diffusion
+        )
+        grads = tape.gradient(loss, variables)
+        self.optimizer.apply_gradients(zip(grads, variables))
 
     @tf.function
     def hamiltonian_flow(self, H: Callable, x0: tf.Tensor, t: tf.Tensor) -> tf.Tensor:
@@ -249,7 +256,7 @@ def test_hamiltonian_flow(dsmr_instance):
     t = tf.linspace(0.0, 10.0, 100)
     flow = dsmr_instance.hamiltonian_flow(H, x0, t)
     assert flow.shape == (100, dsmr_instance.symbolic_dim)
-
+    
 if __name__ == "__main__":
     dsmr = DSMR(neural_dim=768, symbolic_dim=50)
     dsmr.set_equation("x**2 + 2*x + 1")
@@ -257,6 +264,5 @@ if __name__ == "__main__":
 
     print("Initial equation:", dsmr.symbolic_repr)
     for i, result in enumerate(results, 1):
-        print(f"Step {i}:", result)
+        print(f"Result after iteration {i}: {result}")
 
-    pytest.main([__file__])
