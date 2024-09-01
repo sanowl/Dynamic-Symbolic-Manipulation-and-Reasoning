@@ -167,7 +167,7 @@ class DSMR:
         with tf.GradientTape() as tape:
             self.neural_embedding = self.update(self.neural_embedding, verification)
             loss = tf.reduce_mean(tf.square(self.neural_embedding - new_embedding))
-        
+
         variables = (
             self.manifold.metric, self.manifold.christoffel,
             self.lie_group.algebra,
@@ -256,7 +256,7 @@ def test_hamiltonian_flow(dsmr_instance):
     t = tf.linspace(0.0, 10.0, 100)
     flow = dsmr_instance.hamiltonian_flow(H, x0, t)
     assert flow.shape == (100, dsmr_instance.symbolic_dim)
-    
+
 if __name__ == "__main__":
     dsmr = DSMR(neural_dim=768, symbolic_dim=50)
     dsmr.set_equation("x**2 + 2*x + 1")
