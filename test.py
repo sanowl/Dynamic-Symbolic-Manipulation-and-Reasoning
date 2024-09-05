@@ -1,12 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch import Adam
 import sympy as sp
 import numpy as np
 from typing import Callable, List, Tuple, Union, Any, Optional
 from scipy.integrate import solve_ivp
-from scipy.stats import multivariate_normal
 import networkx as nx
 
 class DifferentialGeometry:
@@ -108,23 +106,17 @@ class AdvancedNeuralNetwork(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         try:
             embedding: torch.Tensor = self.network(x)
-            print(f"Embedding shape after network: {embedding.shape}")
             
             if self.adjusted_embed_dim != self.embedding_dim:
                 embedding = embedding[:, :self.adjusted_embed_dim]
-            print(f"Embedding shape after adjustment: {embedding.shape}")
             
             embedding = embedding.unsqueeze(0)
-            print(f"Embedding shape before attention: {embedding.shape}")
             
             attention_output, _ = self.attention(embedding, embedding, embedding)
-            print(f"Attention output shape: {attention_output.shape}")
             
             attention_output = attention_output.squeeze(0)
-            print(f"Attention output shape after squeeze: {attention_output.shape}")
             
             final_output: torch.Tensor = self.final_adjust(attention_output)
-            print(f"Final output shape: {final_output.shape}")
             
             return final_output
         except Exception as e:
@@ -146,7 +138,6 @@ class SymbolicManipulator:
     
     def manipulate(self, expr: sp.Expr, embedding: np.ndarray) -> sp.Expr:
         try:
-            print(f"Embedding shape in manipulate: {embedding.shape}")
             projection_matrix: np.ndarray = np.random.randn(embedding.shape[-1], len(self.operations))
             operation_scores: np.ndarray = np.dot(embedding, projection_matrix)
             operation_index: Union[int, np.integer] = np.argmax(operation_scores)
@@ -182,19 +173,59 @@ class SymbolicGraph:
         except Exception as e:
             raise ValueError(f"Error getting most promising expression: {e}")
 
-class DSMRLayer:
+class DSMRLayer(nn.Module):
     def __init__(self, input_dim: int, embedding_dim: int, hidden_dims: List[int]) -> None:
+        super(DSMRLayer, self).__init__()
         self.neural_model: AdvancedNeuralNetwork = AdvancedNeuralNetwork(input_dim, embedding_dim, hidden_dims)
         self.geometry: DifferentialGeometry = DifferentialGeometry(embedding_dim)
         self.lie_algebra: LieAlgebra = LieAlgebra(embedding_dim)
         self.symbolic_manipulator: SymbolicManipulator = SymbolicManipulator()
         self.symbolic_graph: SymbolicGraph = SymbolicGraph()
-        self.optimizer: optim.Adam = Adam(self.neural_model.parameters(), lr=0.001)
+        self.optimizer: optim.Adam = optim.Adam(self.parameters(), lr=0.001)
+
+    def forward(self, input_data: torch.Tensor) -> torch.Tensor:
+        return self.neural_model(input_data)
+
+    def train_step(self, input_data: torch.Tensor, target_expr: sp.Expr) -> torch.Tensor:
+        embedding = self(input_data)
+        final_symbolic = self.process(embedding, target_expr)
+        loss = self.calculate_loss(final_symbolic, target_expr)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return loss
+
+    def validate(self, input_data: torch.Tensor, target_expr: sp.Expr) -> torch.Tensor:
+        with torch.no_grad():
+            embedding = self(input_data)
+            final_symbolic = self.process(embedding, target_expr)
+            loss = self.calculate_loss(final_symbolic, target_expr)
+        return loss
+
+    def process(self, embedding: torch.Tensor, initial_symbolic: sp.Expr, num_iterations: int = 10) -> sp.Expr:
+        symbolic: sp.Expr = initial_symbolic
+        self.symbolic_graph.add_expression(symbolic)
+        
+        for _ in range(num_iterations):
+            symbolic, embedding = self.neural_guided_manipulation(symbolic, embedding)
+            
+            embedding_np: np.ndarray = embedding.detach().cpu().numpy().flatten()
+            state: np.ndarray = np.concatenate([embedding_np, np.zeros_like(embedding_np)])
+            solution: Any = solve_ivp(self.hamiltonian_flow, (0, 1), state, args=(symbolic,))
+            embedding = torch.tensor(solution.y[:len(embedding_np), -1].reshape(embedding.shape), dtype=torch.float32)
+            
+            embedding = self.stochastic_process(embedding, symbolic, 0.01)
+            
+            cost_function: Callable[[torch.Tensor], float] = lambda x: float(self.symbolic_manipulator.complexity(symbolic) * torch.sum(x**2).item())
+            embedding = self.riemannian_optimization(cost_function, embedding, num_steps=10)
+            
+            symbolic = self.symbolic_graph.get_most_promising()
+        
+        return symbolic
 
     def neural_guided_manipulation(self, symbolic: sp.Expr, embedding: torch.Tensor) -> Tuple[sp.Expr, torch.Tensor]:
         try:
-            embedding_np: np.ndarray = embedding.detach().numpy()
-            print(f"Embedding shape in neural_guided_manipulation: {embedding_np.shape}")
+            embedding_np: np.ndarray = embedding.detach().cpu().numpy()
             
             if embedding_np.ndim == 1:
                 embedding_np = embedding_np.reshape(1, -1)
@@ -204,7 +235,7 @@ class DSMRLayer:
             
             embedding_update: np.ndarray = self.lie_algebra.exp_map(np.random.randn(self.geometry.dimension))
             new_embedding_np: np.ndarray = embedding_np * embedding_update
-            new_embedding: torch.Tensor = torch.tensor(new_embedding_np, dtype=torch.float32)
+            new_embedding: torch.Tensor = torch.tensor(new_embedding_np, dtype=torch.float32, requires_grad=True)
             
             return new_symbolic, new_embedding
         except Exception as e:
@@ -222,12 +253,13 @@ class DSMRLayer:
 
     def stochastic_process(self, embedding: torch.Tensor, symbolic: sp.Expr, dt: float) -> torch.Tensor:
         try:
-            embedding_np: np.ndarray = embedding.detach().numpy()
-            print(f"Embedding shape in stochastic_process: {embedding_np.shape}")
+            embedding_np: np.ndarray = embedding.detach().cpu().numpy()
+            
+            if embedding_np.ndim == 1:
+                embedding_np = embedding_np.reshape(1, -1)
             
             def drift(x: np.ndarray, t: float) -> np.ndarray:
                 complexity: float = self.symbolic_manipulator.complexity(symbolic)
-                potential: float = complexity * np.sum(x**2) / 2
                 grad: np.ndarray = complexity * x
                 return -grad
             
@@ -236,13 +268,12 @@ class DSMRLayer:
             
             noise: np.ndarray = np.random.randn(*embedding_np.shape) * np.sqrt(dt)
             drift_term: np.ndarray = drift(embedding_np, 0) * dt
-            diffusion_term: np.ndarray = diffusion(embedding_np, 0) @ noise
+            diffusion_matrix: np.ndarray = diffusion(embedding_np, 0)
             
-            print(f"Drift term shape: {drift_term.shape}")
-            print(f"Diffusion term shape: {diffusion_term.shape}")
+            diffusion_term: np.ndarray = np.dot(diffusion_matrix, noise.T).T
             
             new_embedding_np: np.ndarray = embedding_np + drift_term + diffusion_term
-            return torch.tensor(new_embedding_np, dtype=torch.float32)
+            return torch.tensor(new_embedding_np, dtype=torch.float32, requires_grad=True)
         except Exception as e:
             raise RuntimeError(f"Error in stochastic_process: {e}")
 
@@ -251,6 +282,7 @@ class DSMRLayer:
             current_point: torch.Tensor = initial_point
             
             for _ in range(num_steps):
+                current_point.requires_grad = True
                 self.optimizer.zero_grad()
                 loss: torch.Tensor = torch.tensor(cost_function(current_point), requires_grad=True)
                 loss.backward()
@@ -258,74 +290,69 @@ class DSMRLayer:
                 grad: Optional[torch.Tensor] = current_point.grad
                 if grad is None:
                     raise ValueError("Gradient is None. Ensure that gradients are being computed correctly.")
-                grad_np: np.ndarray = grad.detach().numpy()
                 
-                metric: np.ndarray = self.geometry.metric_tensor(current_point.detach().numpy())
+                grad_np: np.ndarray = grad.detach().cpu().numpy()
+                
+                metric: np.ndarray = self.geometry.metric_tensor(current_point.detach().cpu().numpy())
                 riem_grad: np.ndarray = np.linalg.solve(metric, grad_np)
                 
                 retraction: Callable[[np.ndarray, np.ndarray], np.ndarray] = lambda X, v: X - 0.01 * v  # Simple retraction
-                new_point_np: np.ndarray = retraction(current_point.detach().numpy(), riem_grad)
+                new_point_np: np.ndarray = retraction(current_point.detach().cpu().numpy(), riem_grad)
                 current_point = torch.tensor(new_point_np, requires_grad=True)
             
             return current_point
         except Exception as e:
             raise RuntimeError(f"Error in riemannian_optimization: {e}")
 
-    def process(self, input_data: torch.Tensor, initial_symbolic: sp.Expr, num_iterations: int) -> Tuple[sp.Expr, torch.Tensor]:
+    def calculate_loss(self, final_symbolic: sp.Expr, target_expr: sp.Expr) -> torch.Tensor:
         try:
-            embedding: torch.Tensor = self.neural_model(input_data)
-            print(f"Initial embedding shape: {embedding.shape}")
-            symbolic: sp.Expr = initial_symbolic
-            self.symbolic_graph.add_expression(symbolic)
+            # Calculate the complexity difference
+            complexity_diff = abs(self.symbolic_manipulator.complexity(final_symbolic) - 
+                                  self.symbolic_manipulator.complexity(target_expr))
             
-            for i in range(num_iterations):
-                print(f"Iteration {i+1}")
-                symbolic, embedding = self.neural_guided_manipulation(symbolic, embedding)
-                
-                embedding_np: np.ndarray = embedding.detach().numpy().flatten()
-                state: np.ndarray = np.concatenate([embedding_np, np.zeros_like(embedding_np)])
-                solution: Any = solve_ivp(self.hamiltonian_flow, (0, 1), state, args=(symbolic,))
-                embedding = torch.tensor(solution.y[:len(embedding_np), -1].reshape(embedding.shape), dtype=torch.float32)
-                
-                embedding = self.stochastic_process(embedding, symbolic, 0.01)
-                
-                cost_function: Callable[[torch.Tensor], float] = lambda x: float(self.symbolic_manipulator.complexity(symbolic) * torch.sum(x**2).item())
-                embedding = self.riemannian_optimization(cost_function, embedding, num_steps=10)
-                
-                symbolic = self.symbolic_graph.get_most_promising()
+            # Calculate the structural similarity
+            similarity = self.structural_similarity(final_symbolic, target_expr)
             
-            return symbolic, embedding
+            # Combine complexity difference and similarity for the loss
+            loss = complexity_diff - similarity
+            
+            return torch.tensor(loss, dtype=torch.float32, requires_grad=True)
         except Exception as e:
-            raise RuntimeError(f"Error in process method: {e}")
+            raise ValueError(f"Error in calculate_loss: {e}")
 
-def main() -> None:
-    try:
-        input_dim: int = 20
-        embedding_dim: int = 64  # Changed to be divisible by 8 for easier attention head division
-        hidden_dims: List[int] = [50, 30, 20]
-        dsmr: DSMRLayer = DSMRLayer(input_dim, embedding_dim, hidden_dims)
-        
-        x, y, z = sp.symbols('x y z')
-        initial_expr: sp.Expr = x**2 + 2*x*y + y**2 + sp.sin(z)
-        
-        input_data: torch.Tensor = torch.randn(1, input_dim)
-        
-        final_symbolic: sp.Expr
-        final_embedding: torch.Tensor
-        final_symbolic, final_embedding = dsmr.process(input_data, initial_expr, num_iterations=10)
-        
-        print("Initial expression:", initial_expr)
-        print("Final expression:", final_symbolic)
-        print("Final embedding shape:", final_embedding.shape)
-        
-        # Additional analysis
-        point: np.ndarray = final_embedding.detach().numpy().flatten()
-        u: np.ndarray = np.random.randn(embedding_dim)
-        v: np.ndarray = np.random.randn(embedding_dim)
-        curvature: float = dsmr.geometry.sectional_curvature(point, u, v)
-        print("Sectional curvature at final point:", curvature)
-    except Exception as e:
-        print(f"Error in main function: {e}")
+    def structural_similarity(self, expr1: sp.Expr, expr2: sp.Expr) -> float:
+        try:
+            # Convert expressions to strings for comparison
+            str1 = str(expr1)
+            str2 = str(expr2)
+            
+            # Calculate Levenshtein distance
+            distance = self.levenshtein_distance(str1, str2)
+            
+            # Normalize the distance to a similarity score
+            max_length = max(len(str1), len(str2))
+            similarity = 1 - (distance / max_length)
+            
+            return similarity
+        except Exception as e:
+            raise ValueError(f"Error in structural_similarity: {e}")
 
-if __name__ == "__main__":
-    main()
+    @staticmethod
+    def levenshtein_distance(s1: str, s2: str) -> int:
+        if len(s1) < len(s2):
+            return DSMRLayer.levenshtein_distance(s2, s1)
+
+        if len(s2) == 0:
+            return len(s1)
+
+        previous_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+
+        return previous_row[-1]
